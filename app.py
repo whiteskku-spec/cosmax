@@ -468,8 +468,8 @@ HEADER_HTML = """
 </div>
 """
 
-st.markdown(GLOBAL_CSS, unsafe_allow_html=True)
-st.markdown(HEADER_HTML, unsafe_allow_html=True)
+st.html(GLOBAL_CSS)
+st.html(HEADER_HTML)
 
 quick_options = ["직접 입력"] + [f"{f}  ·  {n}" for f, n in COMMON_REAGENTS]
 
@@ -527,14 +527,11 @@ if submitted:
         }
 
 if st.session_state.get("calc_error"):
-    st.markdown(f'<p class="calc-error">{st.session_state["calc_error"]}</p>', unsafe_allow_html=True)
+    st.html(f'<p class="calc-error">{st.session_state["calc_error"]}</p>')
 
 result = st.session_state.get("calc_result")
 if result:
     height = 470 if result["svg"] else 340
     components.html(build_result_html(result), height=height, scrolling=False)
 
-st.markdown(
-    '<div class="app-footer">몰질량(M) × 몰농도(mol/L) × 부피(L) = 무게(g)</div>',
-    unsafe_allow_html=True,
-)
+st.html('<div class="app-footer">몰질량(M) × 몰농도(mol/L) × 부피(L) = 무게(g)</div>')
