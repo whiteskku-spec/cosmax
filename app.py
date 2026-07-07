@@ -252,13 +252,113 @@ def format_number(n: float) -> str:
 
 
 # ---------------------------------------------------------------------------
-# RDKit 골격 구조식 렌더링
+# 단순 이온성 화합물(양이온 1종 + 음이온 1종)은 RDKit이 서로 떨어진 원자로
+# 그리면 그냥 "Na+ Cl-" 같은 텍스트로만 보이므로, 알약 모양 이온 카드로 따로 그린다.
+# (cation_symbol, cation_count, cation_charge, anion_symbol, anion_count, anion_charge)
+# ---------------------------------------------------------------------------
+IONIC_PAIRS = {
+    normalize_key("NaOH"): ("Na", 1, 1, "OH", 1, -1),
+    normalize_key("KOH"): ("K", 1, 1, "OH", 1, -1),
+    normalize_key("NaHCO3"): ("Na", 1, 1, "HCO3", 1, -1),
+    normalize_key("Na2CO3"): ("Na", 2, 1, "CO3", 1, -2),
+    normalize_key("K2CO3"): ("K", 2, 1, "CO3", 1, -2),
+    normalize_key("CaCl2"): ("Ca", 1, 2, "Cl", 2, -1),
+    normalize_key("NaCl"): ("Na", 1, 1, "Cl", 1, -1),
+    normalize_key("KCl"): ("K", 1, 1, "Cl", 1, -1),
+    normalize_key("NH4Cl"): ("NH4", 1, 1, "Cl", 1, -1),
+    normalize_key("NaNO3"): ("Na", 1, 1, "NO3", 1, -1),
+    normalize_key("KNO3"): ("K", 1, 1, "NO3", 1, -1),
+    normalize_key("AgNO3"): ("Ag", 1, 1, "NO3", 1, -1),
+    normalize_key("FeCl3"): ("Fe", 1, 3, "Cl", 3, -1),
+    normalize_key("FeCl2"): ("Fe", 1, 2, "Cl", 2, -1),
+    normalize_key("CuSO4"): ("Cu", 1, 2, "SO4", 1, -2),
+    normalize_key("CuSO4·5H2O"): ("Cu", 1, 2, "SO4", 1, -2),
+    normalize_key("MgSO4·7H2O"): ("Mg", 1, 2, "SO4", 1, -2),
+    normalize_key("Na2SO4"): ("Na", 2, 1, "SO4", 1, -2),
+    normalize_key("Ca(OH)2"): ("Ca", 1, 2, "OH", 2, -1),
+    normalize_key("BaCl2"): ("Ba", 1, 2, "Cl", 2, -1),
+    normalize_key("ZnSO4"): ("Zn", 1, 2, "SO4", 1, -2),
+    normalize_key("Al2(SO4)3"): ("Al", 2, 3, "SO4", 3, -2),
+    normalize_key("Pb(NO3)2"): ("Pb", 1, 2, "NO3", 2, -1),
+    normalize_key("NH4NO3"): ("NH4", 1, 1, "NO3", 1, -1),
+    normalize_key("KMnO4"): ("K", 1, 1, "MnO4", 1, -1),
+    normalize_key("CaCO3"): ("Ca", 1, 2, "CO3", 1, -2),
+    normalize_key("BaSO4"): ("Ba", 1, 2, "SO4", 1, -2),
+    normalize_key("AgCl"): ("Ag", 1, 1, "Cl", 1, -1),
+    normalize_key("CuCl2"): ("Cu", 1, 2, "Cl", 2, -1),
+    normalize_key("MgCl2"): ("Mg", 1, 2, "Cl", 2, -1),
+    normalize_key("MgO"): ("Mg", 1, 2, "O", 1, -2),
+    normalize_key("CaO"): ("Ca", 1, 2, "O", 1, -2),
+    normalize_key("NaF"): ("Na", 1, 1, "F", 1, -1),
+    normalize_key("KBr"): ("K", 1, 1, "Br", 1, -1),
+    normalize_key("NaBr"): ("Na", 1, 1, "Br", 1, -1),
+    normalize_key("KI"): ("K", 1, 1, "I", 1, -1),
+    normalize_key("NaI"): ("Na", 1, 1, "I", 1, -1),
+    normalize_key("ZnCl2"): ("Zn", 1, 2, "Cl", 2, -1),
+    normalize_key("AlCl3"): ("Al", 1, 3, "Cl", 3, -1),
+    normalize_key("NaOCl"): ("Na", 1, 1, "OCl", 1, -1),
+}
+
+
+def _ion_pill_width(label: str) -> float:
+    return max(34, len(label) * 13 + 18)
+
+
+def _ion_pill_svg(cx: float, cy: float, symbol: str, count: int, charge: int) -> str:
+    w = _ion_pill_width(symbol)
+    h = 28
+    x = cx - w / 2
+    y = cy - h / 2
+    charge_text = ""
+    if charge:
+        mag = abs(charge)
+        charge_text = (str(mag) if mag > 1 else "") + ("+" if charge > 0 else "−")
+    count_sup = f'<tspan font-size="10" dy="4">{count}</tspan>' if count > 1 else ""
+    svg = (
+        f'<rect x="{x}" y="{y}" width="{w}" height="{h}" rx="{h / 2}" '
+        f'fill="#e4ebff" stroke="#8ea3e6" stroke-width="1.3"/>'
+        f'<text x="{cx}" y="{cy + 1}" text-anchor="middle" dominant-baseline="central" '
+        f'font-size="15" font-weight="700" font-family="Arial, sans-serif" fill="#1c2942">'
+        f'{symbol}{count_sup}</text>'
+    )
+    if charge_text:
+        svg += (
+            f'<text x="{x + w - 2}" y="{y - 4}" text-anchor="middle" font-size="12" '
+            f'font-weight="700" font-family="Arial, sans-serif" fill="#3a5fad">{charge_text}</text>'
+        )
+    return svg
+
+
+def build_ionic_svg(cation_symbol, cation_count, cation_charge, anion_symbol, anion_count, anion_charge) -> str:
+    left_w = _ion_pill_width(cation_symbol)
+    right_w = _ion_pill_width(anion_symbol)
+    gap = 26
+    total_w = left_w + right_w + gap
+    start_x = (220 - total_w) / 2
+    left_cx = start_x + left_w / 2
+    right_cx = start_x + left_w + gap + right_w / 2
+    cy = 80
+    svg = '<svg viewBox="0 0 220 150" xmlns="http://www.w3.org/2000/svg">'
+    svg += _ion_pill_svg(left_cx, cy, cation_symbol, cation_count, cation_charge)
+    svg += _ion_pill_svg(right_cx, cy, anion_symbol, anion_count, anion_charge)
+    svg += "</svg>"
+    return svg
+
+
+# ---------------------------------------------------------------------------
+# RDKit 골격 구조식 렌더링 (공유 결합 분자 전용 — 이온성 화합물은 위 알약 카드로 처리)
 # ---------------------------------------------------------------------------
 FORMULA_SMILES = {normalize_key(f): smiles for f, _, smiles in REAGENTS}
 
 
 def render_structure_svg(formula: str, width: int = 220, height: int = 150):
-    smiles = FORMULA_SMILES.get(normalize_key(formula))
+    key = normalize_key(formula)
+
+    ion_pair = IONIC_PAIRS.get(key)
+    if ion_pair:
+        return build_ionic_svg(*ion_pair)
+
+    smiles = FORMULA_SMILES.get(key)
     if not smiles:
         return None
     try:
@@ -318,6 +418,8 @@ GLOBAL_CSS = """
   }
 
   .stApp {
+    position: relative;
+    overflow-x: hidden;
     background: linear-gradient(180deg, #eef0ff 0%, #cdd9ff 100%);
     font-family: "Pretendard", "Malgun Gothic", "Apple SD Gothic Neo", -apple-system,
       BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
@@ -326,11 +428,25 @@ GLOBAL_CSS = """
   #MainMenu, footer, header[data-testid="stHeader"] { visibility: hidden; }
 
   .block-container {
+    position: relative;
+    z-index: 1;
     max-width: 560px;
     margin: 0 auto;
     padding-top: 2.2rem;
     padding-bottom: 3rem;
   }
+
+  .bg-deco {
+    position: absolute;
+    pointer-events: none;
+    color: var(--blue-700);
+    opacity: 0.13;
+    z-index: 0;
+  }
+
+  .bg-deco svg { display: block; width: 100%; height: auto; }
+  .bg-deco-1 { top: -40px; right: -70px; width: 300px; transform: rotate(18deg); }
+  .bg-deco-2 { bottom: -30px; left: -90px; width: 420px; transform: rotate(-14deg); }
 
   @keyframes flaskFloat {
     0%, 100% { transform: rotate(14deg) translateY(0); }
@@ -340,23 +456,23 @@ GLOBAL_CSS = """
   .title-row {
     display: flex;
     align-items: center;
-    justify-content: center;
     gap: 0;
-    margin-bottom: 20px;
+    margin-bottom: 24px;
   }
 
   .flask-icon {
-    width: 84px;
-    height: 84px;
+    width: 96px;
+    height: 96px;
     flex-shrink: 0;
-    margin-left: -16px;
+    margin-left: -20px;
     margin-top: -6px;
+    overflow: visible;
     animation: flaskFloat 3.2s ease-in-out infinite;
   }
 
   .title-row h1 {
     font-family: "Baloo 2", "Jua", "Malgun Gothic", "Apple SD Gothic Neo", sans-serif;
-    font-size: 34px;
+    font-size: 38px;
     font-weight: 800;
     color: var(--blue-700);
     letter-spacing: -0.01em;
@@ -374,7 +490,7 @@ GLOBAL_CSS = """
     background: var(--white);
     border: 1px solid var(--border);
     border-radius: 20px;
-    padding: 22px 20px 26px;
+    padding: 24px 20px 28px;
     box-shadow: 0 8px 30px rgba(20, 80, 201, 0.08);
   }
 
@@ -435,7 +551,50 @@ GLOBAL_CSS = """
     font-size: 12px;
     margin-top: 18px;
   }
+
+  @media (max-width: 480px) {
+    .bg-deco-1 { width: 210px; top: -30px; right: -55px; }
+    .bg-deco-2 { width: 280px; bottom: -20px; left: -60px; }
+    .title-row { position: relative; justify-content: center; }
+    .title-row h1 { font-size: 28px; text-align: center; }
+    .flask-icon {
+      position: absolute;
+      top: -2px;
+      left: 50%;
+      margin-left: 62px;
+      margin-top: 0;
+      width: 74px;
+      height: 74px;
+    }
+    div[data-testid="stForm"] { padding: 20px 16px 24px; }
+  }
 </style>
+"""
+
+BACKGROUND_HTML = """
+<div class="bg-deco bg-deco-1" aria-hidden="true">
+  <svg viewBox="0 0 200 200" fill="none" xmlns="http://www.w3.org/2000/svg">
+    <polygon points="100,20 169.3,60 169.3,140 100,180 30.7,140 30.7,60"
+      stroke="currentColor" stroke-width="4" stroke-linejoin="round"/>
+    <line x1="113.86" y1="40" x2="145.05" y2="58" stroke="currentColor" stroke-width="4" stroke-linecap="round"/>
+    <line x1="145.05" y1="142" x2="113.86" y2="160" stroke="currentColor" stroke-width="4" stroke-linecap="round"/>
+    <line x1="41.1" y1="118" x2="41.1" y2="82" stroke="currentColor" stroke-width="4" stroke-linecap="round"/>
+  </svg>
+</div>
+<div class="bg-deco bg-deco-2" aria-hidden="true">
+  <svg viewBox="0 0 340 200" fill="none" xmlns="http://www.w3.org/2000/svg">
+    <polygon points="100,20 30.7,60 30.7,140 100,180 169.3,140 169.3,60"
+      stroke="currentColor" stroke-width="5" stroke-linejoin="round"/>
+    <polygon points="169.3,60 238.6,20 307.9,60 307.9,140 238.6,180 169.3,140"
+      stroke="currentColor" stroke-width="5" stroke-linejoin="round"/>
+    <line x1="113.86" y1="40" x2="145.05" y2="58" stroke="currentColor" stroke-width="5" stroke-linecap="round"/>
+    <line x1="145.05" y1="142" x2="113.86" y2="160" stroke="currentColor" stroke-width="5" stroke-linecap="round"/>
+    <line x1="41.1" y1="118" x2="41.1" y2="82" stroke="currentColor" stroke-width="5" stroke-linecap="round"/>
+    <line x1="224.74" y1="40" x2="193.55" y2="58" stroke="currentColor" stroke-width="5" stroke-linecap="round"/>
+    <line x1="193.55" y1="142" x2="224.74" y2="160" stroke="currentColor" stroke-width="5" stroke-linecap="round"/>
+    <line x1="297.5" y1="118" x2="297.5" y2="82" stroke="currentColor" stroke-width="5" stroke-linecap="round"/>
+  </svg>
+</div>
 """
 
 HEADER_HTML = """
@@ -457,18 +616,47 @@ HEADER_HTML = """
         <stop offset="50%" stop-color="#f2f7ff"/>
         <stop offset="100%" stop-color="#a3aed4"/>
       </linearGradient>
+      <filter id="flaskShadow" x="-40%" y="-20%" width="180%" height="160%">
+        <feDropShadow dx="0" dy="3" stdDeviation="2.4" flood-color="#3a5fad" flood-opacity="0.35"/>
+      </filter>
     </defs>
-    <path d="M28 7V24.5L14.5 48.5C12.7 51.7 15 55.7 18.7 55.7H45.3C49 55.7 51.3 51.7 49.5 48.5L36 24.5V7Z"
-      fill="url(#glassGrad)" stroke="#3a5fad" stroke-width="2.3" stroke-linejoin="round"/>
-    <path d="M16.7 44.8C15.6 46.8 14.6 48.9 15.6 51.2C16.6 53.4 18.9 53.9 21.3 53.9H43.4C45.6 53.9 47.7 53.3 48.5 51.3C49.4 49.1 48.4 46.8 47.2 44.8C43.6 46.6 38.3 47.7 32 47.7C25.7 47.7 20.4 46.6 16.7 44.8Z"
-      fill="url(#liquidGrad)"/>
-    <rect x="26" y="5.2" width="12" height="3.4" rx="1.6" fill="url(#neckGrad)" stroke="#3a5fad" stroke-width="1.6"/>
+    <g filter="url(#flaskShadow)">
+      <path d="M28 7V24.5L14.5 48.5C12.7 51.7 15 55.7 18.7 55.7H45.3C49 55.7 51.3 51.7 49.5 48.5L36 24.5V7Z"
+        fill="url(#glassGrad)" stroke="#3a5fad" stroke-width="2.3" stroke-linejoin="round"/>
+      <path d="M16.7 44.8C15.6 46.8 14.6 48.9 15.6 51.2C16.6 53.4 18.9 53.9 21.3 53.9H43.4C45.6 53.9 47.7 53.3 48.5 51.3C49.4 49.1 48.4 46.8 47.2 44.8C43.6 46.6 38.3 47.7 32 47.7C25.7 47.7 20.4 46.6 16.7 44.8Z"
+        fill="url(#liquidGrad)"/>
+      <ellipse cx="24" cy="49.5" rx="3.4" ry="1.6" fill="#ffffff" opacity="0.35"/>
+      <circle cx="34" cy="51" r="2" fill="#bfe0ff" opacity="0.9"/>
+      <circle cx="40" cy="44.5" r="1.4" fill="#eaf3ff" opacity="0.9"/>
+      <circle cx="29" cy="43.5" r="1.1" fill="#eaf3ff" opacity="0.8"/>
+      <path d="M29.2 9V24.5" stroke="#ffffff" stroke-width="1.6" stroke-linecap="round" opacity="0.7"/>
+      <rect x="26" y="5.2" width="12" height="3.4" rx="1.6" fill="url(#neckGrad)" stroke="#3a5fad" stroke-width="1.6"/>
+      <circle cx="30" cy="4" r="1.6" fill="#8fc0ff" opacity="0">
+        <animate attributeName="cy" values="4;-15" dur="2.4s" begin="0s" repeatCount="indefinite"/>
+        <animate attributeName="cx" values="30;27;30" dur="2.4s" begin="0s" repeatCount="indefinite"/>
+        <animate attributeName="opacity" values="0;0.9;0" keyTimes="0;0.3;1" dur="2.4s" begin="0s" repeatCount="indefinite"/>
+        <animate attributeName="r" values="1;2;1.2" dur="2.4s" begin="0s" repeatCount="indefinite"/>
+      </circle>
+      <circle cx="33" cy="4" r="1.2" fill="#bfe0ff" opacity="0">
+        <animate attributeName="cy" values="4;-13" dur="2s" begin="0.6s" repeatCount="indefinite"/>
+        <animate attributeName="cx" values="33;36;33" dur="2s" begin="0.6s" repeatCount="indefinite"/>
+        <animate attributeName="opacity" values="0;0.9;0" keyTimes="0;0.3;1" dur="2s" begin="0.6s" repeatCount="indefinite"/>
+        <animate attributeName="r" values="0.8;1.6;1" dur="2s" begin="0.6s" repeatCount="indefinite"/>
+      </circle>
+      <circle cx="31.5" cy="4" r="1" fill="#eaf3ff" opacity="0">
+        <animate attributeName="cy" values="4;-17" dur="2.8s" begin="1.2s" repeatCount="indefinite"/>
+        <animate attributeName="cx" values="31.5;29;31.5" dur="2.8s" begin="1.2s" repeatCount="indefinite"/>
+        <animate attributeName="opacity" values="0;0.85;0" keyTimes="0;0.3;1" dur="2.8s" begin="1.2s" repeatCount="indefinite"/>
+        <animate attributeName="r" values="0.6;1.4;0.8" dur="2.8s" begin="1.2s" repeatCount="indefinite"/>
+      </circle>
+    </g>
   </svg>
   <h1>Experimental Helper</h1>
 </div>
 """
 
 st.html(GLOBAL_CSS)
+st.html(BACKGROUND_HTML)
 st.html(HEADER_HTML)
 
 quick_options = ["직접 입력"] + [f"{f}  ·  {n}" for f, n in COMMON_REAGENTS]
