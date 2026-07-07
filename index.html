@@ -683,6 +683,7 @@
   var weightRow = document.getElementById("weightRow");
   var scaleWrap = document.getElementById("scaleWrap");
   var pileEl = document.getElementById("pile");
+  var structureWrap = document.getElementById("structureWrap");
   var structureSvgHolder = document.getElementById("structureSvgHolder");
 
   var MAX_PILE_HEIGHT = 60; // px, height of a "full" pile
@@ -719,6 +720,92 @@
       }
     }
     return DEFAULT_PILE_COLORS;
+  }
+
+  // 원자 하나를 원(bubble)로 그린다. label은 원소 기호
+  function atomBubble(x, y, label, r) {
+    r = r || 11;
+    var fontSize = label.length > 1 ? 14 : 16;
+    return (
+      '<circle cx="' + x + '" cy="' + y + '" r="' + r + '" fill="#ffffff"/>' +
+      '<text x="' + x + '" y="' + (y + 1) + '" text-anchor="middle" dominant-baseline="central" font-size="' + fontSize + '" font-weight="700" font-family="Arial, sans-serif" fill="#1c2942">' + label + '</text>'
+    );
+  }
+
+  // 중심 원자 하나에 외곽 원자 n개가 결합선으로 연결된 형태(공유 결합 분자)를 그린다
+  var COVALENT_OFFSETS = {
+    2: [[-40, 37], [40, 37]],
+    3: [[-40, 40], [0, 50], [40, 40]],
+    4: [[-55, 32], [-20, 52], [20, 52], [55, 32]]
+  };
+
+  function buildCovalentSVG(centerSymbol, outerSymbols) {
+    var n = outerSymbols.length;
+    var svg = '<svg viewBox="0 0 220 150" xmlns="http://www.w3.org/2000/svg">';
+
+    if (n === 1) {
+      svg += '<line x1="70" y1="75" x2="150" y2="75" stroke="#33415c" stroke-width="2.2"/>';
+      svg += atomBubble(70, 75, centerSymbol, 11);
+      svg += atomBubble(150, 75, outerSymbols[0], 12);
+      svg += '</svg>';
+      return svg;
+    }
+
+    var offsets = COVALENT_OFFSETS[n];
+    if (!offsets) return null;
+
+    var cx = 110, cy = 55;
+    for (var i = 0; i < n; i++) {
+      var ox = cx + offsets[i][0], oy = cy + offsets[i][1];
+      svg += '<line x1="' + cx + '" y1="' + cy + '" x2="' + ox + '" y2="' + oy + '" stroke="#33415c" stroke-width="2.2"/>';
+    }
+    svg += atomBubble(cx, cy, centerSymbol, 12);
+    for (var j = 0; j < n; j++) {
+      svg += atomBubble(cx + offsets[j][0], cy + offsets[j][1], outerSymbols[j], 10);
+    }
+    svg += '</svg>';
+    return svg;
+  }
+
+  // 이온 하나를 알약 모양으로 그린다 (아래 첨자 개수 + 위 첨자 전하 표시)
+  function ionPillWidth(label) {
+    return Math.max(34, label.length * 13 + 18);
+  }
+
+  function ionPill(cx, cy, symbol, count, charge) {
+    var w = ionPillWidth(symbol);
+    var h = 28;
+    var x = cx - w / 2;
+    var y = cy - h / 2;
+    var chargeText = "";
+    if (charge) {
+      var mag = Math.abs(charge);
+      chargeText = (mag > 1 ? mag : "") + (charge > 0 ? "+" : "−");
+    }
+    var countSup = count > 1 ? '<tspan font-size="10" dy="4">' + count + '</tspan>' : "";
+    var svg = '<rect x="' + x + '" y="' + y + '" width="' + w + '" height="' + h + '" rx="' + (h / 2) + '" fill="#ffffff"/>';
+    svg += '<text x="' + cx + '" y="' + (cy + 1) + '" text-anchor="middle" dominant-baseline="central" font-size="15" font-weight="700" font-family="Arial, sans-serif" fill="#1c2942">' + symbol + countSup + '</text>';
+    if (chargeText) {
+      svg += '<text x="' + (x + w - 2) + '" y="' + (y - 4) + '" text-anchor="middle" font-size="12" font-weight="700" font-family="Arial, sans-serif" fill="#3a5fad">' + chargeText + '</text>';
+    }
+    return svg;
+  }
+
+  // 양이온/음이온 쌍을 나란히 그린다 (이온 결합 화합물)
+  function buildIonicSVG(cation, anion) {
+    var leftW = ionPillWidth(cation.symbol);
+    var rightW = ionPillWidth(anion.symbol);
+    var gap = 26;
+    var totalW = leftW + rightW + gap;
+    var startX = (220 - totalW) / 2;
+    var leftCx = startX + leftW / 2;
+    var rightCx = startX + leftW + gap + rightW / 2;
+    var cy = 80;
+    var svg = '<svg viewBox="0 0 220 150" xmlns="http://www.w3.org/2000/svg">';
+    svg += ionPill(leftCx, cy, cation.symbol, cation.count, cation.charge);
+    svg += ionPill(rightCx, cy, anion.symbol, anion.count, anion.charge);
+    svg += '</svg>';
+    return svg;
   }
 
   // 골격 구조식: 비공유 전자쌍 없이 결합선과 (유기물의 경우) 생략된 탄소 골격으로 표현한다
@@ -821,15 +908,75 @@
       + '</svg>'
   };
 
+  // 손으로 그린 구조식(STRUCTURES)에 없는 화합물은 여기서 공유/이온 결합 형태로 정의한다
+  function ion(symbol, count, charge) {
+    return { symbol: symbol, count: count, charge: charge };
+  }
+
+  var STRUCTURE_DEFS = {
+    "CH4": { covalent: { center: "C", outer: ["H", "H", "H", "H"] } },
+    "CCL4": { covalent: { center: "C", outer: ["Cl", "Cl", "Cl", "Cl"] } },
+    "SO2": { covalent: { center: "S", outer: ["O", "O"] } },
+    "SO3": { covalent: { center: "S", outer: ["O", "O", "O"] } },
+    "H2S": { covalent: { center: "S", outer: ["H", "H"] } },
+    "PCL3": { covalent: { center: "P", outer: ["Cl", "Cl", "Cl"] } },
+    "BF3": { covalent: { center: "B", outer: ["F", "F", "F"] } },
+    "O2": { covalent: { center: "O", outer: ["O"] } },
+    "N2": { covalent: { center: "N", outer: ["N"] } },
+    "H2": { covalent: { center: "H", outer: ["H"] } },
+    "CL2": { covalent: { center: "Cl", outer: ["Cl"] } },
+
+    "H2SO4": { ionic: { cation: ion("H", 2, 1), anion: ion("SO4", 1, -2) } },
+    "NAHCO3": { ionic: { cation: ion("Na", 1, 1), anion: ion("HCO3", 1, -1) } },
+    "NA2CO3": { ionic: { cation: ion("Na", 2, 1), anion: ion("CO3", 1, -2) } },
+    "K2CO3": { ionic: { cation: ion("K", 2, 1), anion: ion("CO3", 1, -2) } },
+    "CACL2": { ionic: { cation: ion("Ca", 1, 2), anion: ion("Cl", 2, -1) } },
+    "NH4CL": { ionic: { cation: ion("NH4", 1, 1), anion: ion("Cl", 1, -1) } },
+    "NANO3": { ionic: { cation: ion("Na", 1, 1), anion: ion("NO3", 1, -1) } },
+    "KNO3": { ionic: { cation: ion("K", 1, 1), anion: ion("NO3", 1, -1) } },
+    "AGNO3": { ionic: { cation: ion("Ag", 1, 1), anion: ion("NO3", 1, -1) } },
+    "FECL3": { ionic: { cation: ion("Fe", 1, 3), anion: ion("Cl", 3, -1) } },
+    "CUSO4·5H2O": { ionic: { cation: ion("Cu", 1, 2), anion: ion("SO4", 1, -2) } },
+    "MGSO4·7H2O": { ionic: { cation: ion("Mg", 1, 2), anion: ion("SO4", 1, -2) } },
+    "NA2SO4": { ionic: { cation: ion("Na", 2, 1), anion: ion("SO4", 1, -2) } },
+    "CA(OH)2": { ionic: { cation: ion("Ca", 1, 2), anion: ion("OH", 2, -1) } },
+    "BACL2": { ionic: { cation: ion("Ba", 1, 2), anion: ion("Cl", 2, -1) } },
+    "ZNSO4": { ionic: { cation: ion("Zn", 1, 2), anion: ion("SO4", 1, -2) } },
+    "AL2(SO4)3": { ionic: { cation: ion("Al", 2, 3), anion: ion("SO4", 3, -2) } },
+    "PB(NO3)2": { ionic: { cation: ion("Pb", 1, 2), anion: ion("NO3", 2, -1) } },
+    "NH4NO3": { ionic: { cation: ion("NH4", 1, 1), anion: ion("NO3", 1, -1) } },
+    "KMNO4": { ionic: { cation: ion("K", 1, 1), anion: ion("MnO4", 1, -1) } },
+    "CACO3": { ionic: { cation: ion("Ca", 1, 2), anion: ion("CO3", 1, -2) } },
+    "BASO4": { ionic: { cation: ion("Ba", 1, 2), anion: ion("SO4", 1, -2) } },
+    "AGCL": { ionic: { cation: ion("Ag", 1, 1), anion: ion("Cl", 1, -1) } },
+    "CUCL2": { ionic: { cation: ion("Cu", 1, 2), anion: ion("Cl", 2, -1) } },
+    "FECL2": { ionic: { cation: ion("Fe", 1, 2), anion: ion("Cl", 2, -1) } },
+    "MGCL2": { ionic: { cation: ion("Mg", 1, 2), anion: ion("Cl", 2, -1) } },
+    "MGO": { ionic: { cation: ion("Mg", 1, 2), anion: ion("O", 1, -2) } },
+    "CAO": { ionic: { cation: ion("Ca", 1, 2), anion: ion("O", 1, -2) } }
+  };
+
   function showStructure(formulaText) {
     var key = formulaText.replace(/\s+/g, "").toUpperCase();
     var svg = STRUCTURES[key];
+
+    if (!svg) {
+      var def = STRUCTURE_DEFS[key];
+      if (def) {
+        if (def.covalent) {
+          svg = buildCovalentSVG(def.covalent.center, def.covalent.outer);
+        } else if (def.ionic) {
+          svg = buildIonicSVG(def.ionic.cation, def.ionic.anion);
+        }
+      }
+    }
+
     if (svg) {
       structureSvgHolder.innerHTML = svg;
-      structureSvgHolder.style.display = "block";
+      structureWrap.style.display = "flex";
     } else {
       structureSvgHolder.innerHTML = "";
-      structureSvgHolder.style.display = "none";
+      structureWrap.style.display = "none";
     }
   }
 
@@ -938,6 +1085,7 @@
     molValueEl.textContent = "0";
     massValueEl.textContent = "0";
     structureSvgHolder.innerHTML = "";
+    structureWrap.style.display = "none";
   }
 
   // 0에서 목표값까지 ease-out으로 숫자를 증가시키며 표시한다
